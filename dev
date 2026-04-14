@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+set -e
+
+DEV_TAG_GREEN="\033[48;5;2m\033[38;5;16m dev \033[0m"
+DEV_TAG_RED="\033[48;5;1m\033[38;5;16m dev \033[0m"
+DEV_TAG_BLUE="\033[48;5;4m\033[38;5;16m dev \033[0m"
+
+PROJECT_ROOT="$PWD"
+PROJECT_NAME=$(basename "$PROJECT_ROOT")
+
+REPO_DIR="$PROJECT_ROOT/repo"
+CONTAINER_DIR="$PROJECT_ROOT/container"
+
+COMPOSE_FILE="$CONTAINER_DIR/compose.yml"
+DOCKERFILE="$CONTAINER_DIR/Dockerfile"
+
+dev_help() {
+  echo
+  echo -e "${DEV_TAG_BLUE} Available commands:"
+  echo -e "${DEV_TAG_BLUE}   dev init     Initialize container environment"
+  echo -e "${DEV_TAG_BLUE}   dev          Start dev container shell"
+  echo -e "${DEV_TAG_BLUE}   dev clean    Remove container image"
+  echo -e "${DEV_TAG_BLUE}   dev rebuild  Rebuild container image (--no-cache)"
+  echo -e "${DEV_TAG_BLUE}   dev cli      Drop into container shell (builds if needed)"
+  echo
+}
+
+ensure_project_root() {
+  if [ ! -d "$REPO_DIR" ]; then
+    echo -e "${DEV_TAG_RED} Error: repo/ folder not found."
+    echo -e "${DEV_TAG_RED} Run this command from the project root."
+    exit 1
+  fi
+}
+
+dev_init() {
+
+  ensure_project_root
+
+  if [ -d "$CONTAINER_DIR" ]; then
+    echo -e "${DEV_TAG_RED} Environment already exists."
+    echo -e "${DEV_TAG_RED} Run: dev"
+    exit 1
+  fi
+
+  mkdir -p "$CONTAINER_DIR"
+
+  RUNTIME=$(printf "%s\n" node ubuntu | fzf --prompt="Select runtime > ")
+
+  if [ -z "$RUNTIME" ]; then
+    echo -e "${DEV_TAG_RED} No runtime selected."
+    exit 1
+  fi
+
+  IMAGE_TAG=$(curl -s "https://registry.hub.docker.com/v2/repositories/library/${RUNTIME}/tags?page_size=100" |
+    jq -r '.results[].name' |
+    grep -E '^[0-9]+(\.[0-9]+)?' |
+    sort -Vr |
+    fzf --prompt="Select ${RUNTIME} version > ")
+
+  if [ -z "$IMAGE_TAG" ]; then
+    echo -e "${DEV_TAG_RED} No version selected."
+    exit 1
+  fi
+
+  IMAGE="${RUNTIME}:${IMAGE_TAG}"
+
+  cat >"$DOCKERFILE" <<EOF
+FROM $IMAGE
+WORKDIR /app
+# Common start commands you can uncomment to customize per-project
+# CMD ["bash"]
+# CMD ["bash","-l"]
+# CMD ["sh"]
+# CMD ["node","server.js"]
+# CMD ["python","main.py"]
+# CMD ["npm","start"]
+CMD ["bash"]
+EOF
+
+  cat >"$COMPOSE_FILE" <<EOF
+name: ${PROJECT_NAME}-dev
+
+services:
+  app:
+    build: .
+    network_mode: host
+    working_dir: /app
+    volumes:
+      - ../repo:/app
+    environment:
+      - PORT
+    stdin_open: true
+    tty: true
+    init: true
+    user: "\${HOST_UID}:\${HOST_GID}"
+EOF
+
+  echo
+  echo -e "${DEV_TAG_GREEN} Environment initialized."
+  echo -e "${DEV_TAG_GREEN} Run: dev"
+}
+
+dev_run() {
+
+  ensure_project_root
+
+  if [ ! -d "$CONTAINER_DIR" ]; then
+    dev_help
+    exit 1
+  fi
+
+  echo -e "${DEV_TAG_BLUE} Starting…"
+
+  export HOST_UID=$(id -u)
+  export HOST_GID=$(id -g)
+
+  script -q /dev/null -c "docker compose -f $COMPOSE_FILE build --progress=plain"
+
+  docker compose -f "$COMPOSE_FILE" run --rm --service-ports app
+}
+
+dev_rebuild() {
+  ensure_project_root
+
+  if [ ! -d "$CONTAINER_DIR" ]; then
+    dev_help
+    exit 1
+  fi
+
+  docker compose -f "$COMPOSE_FILE" build --no-cache --progress=plain
+}
+
+dev_cli() {
+  ensure_project_root
+
+  if [ ! -d "$CONTAINER_DIR" ]; then
+    dev_help
+    exit 1
+  fi
+
+  echo -e "${DEV_TAG_BLUE} Building…"
+
+  export HOST_UID=$(id -u)
+  export HOST_GID=$(id -g)
+
+  script -q /dev/null -c "docker compose -f $COMPOSE_FILE build --progress=plain"
+
+  docker compose -f "$COMPOSE_FILE" run --rm --service-ports app bash
+}
+
+dev_clean() {
+
+  ensure_project_root
+
+  if [ ! -d "$CONTAINER_DIR" ]; then
+    dev_help
+    exit 1
+  fi
+
+  echo -e "${DEV_TAG_BLUE} Cleaning…"
+
+  docker compose -f "$COMPOSE_FILE" down --rmi all --volumes --remove-orphans || true
+  # Remove the generated container directory as part of a full clean
+  rm -rf "$CONTAINER_DIR" || true
+
+  echo
+  echo -e "${DEV_TAG_GREEN} Environment cleaned."
+}
+
+CMD="$1"
+
+case "$CMD" in
+  init)
+    dev_init
+    ;;
+  clean)
+    dev_clean
+    ;;
+  rebuild)
+    dev_rebuild
+    ;;
+  cli)
+    dev_cli
+    ;;
+  "")
+    dev_run
+    ;;
+*)
+  dev_help
+  ;;
+esac
