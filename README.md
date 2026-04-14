@@ -150,18 +150,18 @@ If the project already has a `Dockerfile` in the root, the script will detect it
 
 ## Troubleshooting
 
-**"repo/ folder not found"**
+**"repo/ folder not found"**  
 Run `dev` from the project root. You need a `repo/` folder at `$PWD/repo`.
 
-**"Error: No such file or directory" for fzf/jq**
+**"Error: No such file or directory" for fzf/jq**  
 Install the prerequisites.
 
-**Permission denied when creating files**
+**Permission denied when creating files**  
 The container runs as your host user (via `HOST_UID`/`HOST_GID`), so file permissions should work. If you still have issues, check your Docker daemon is running.
 
-**Container starts but immediately exits**
+**Container starts but immediately exits**  
 Your container likely needs a persistent shell. Edit `container/Dockerfile` and ensure `CMD ["bash"]` (not `CMD ["node"]` or similar).
 
-**Port already in use**
+**Port already in use**  
 `network_mode: host` means the container uses your host's network. If you get port conflicts, change the service port in your app's config.
 
