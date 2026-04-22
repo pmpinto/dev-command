@@ -115,7 +115,7 @@ dev_run() {
   export HOST_UID=$(id -u)
   export HOST_GID=$(id -g)
 
-  script -q /dev/null -c "docker compose -f $COMPOSE_FILE build --progress=plain"
+  docker compose -f "$COMPOSE_FILE" build --progress=plain
 
   docker compose -f "$COMPOSE_FILE" run --rm --service-ports app
 }
@@ -144,7 +144,7 @@ dev_cli() {
   export HOST_UID=$(id -u)
   export HOST_GID=$(id -g)
 
-  script -q /dev/null -c "docker compose -f $COMPOSE_FILE build --progress=plain"
+  docker compose -f "$COMPOSE_FILE" build --progress=plain
 
   docker compose -f "$COMPOSE_FILE" run --rm --service-ports app bash
 }
