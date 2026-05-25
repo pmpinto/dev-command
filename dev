@@ -14,6 +14,9 @@ CONTAINER_DIR="$PROJECT_ROOT/container"
 COMPOSE_FILE="$CONTAINER_DIR/compose.yml"
 DOCKERFILE="$CONTAINER_DIR/Dockerfile"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEMPLATES_DIR="$SCRIPT_DIR/templates"
+
 dev_help() {
   echo
   echo -e "${DEV_TAG_BLUE} Available commands:"
@@ -136,91 +139,39 @@ dev_init() {
 
   IMAGE="${RUNTIME}:${IMAGE_TAG}"
 
+  # Render Dockerfile
+  sed -e "s|{{IMAGE}}|$IMAGE|g" "$TEMPLATES_DIR/Dockerfile" > "$DOCKERFILE"
   if [ "$RUNTIME" = "node" ]; then
-    cat >"$DOCKERFILE" <<EOF
-FROM $IMAGE
-WORKDIR /app
-
+    local tmpf=$(mktemp)
+    cat > "$tmpf" <<'HARDENING'
 # Harden npm config - blocks postinstall hooks and fast-burst worms
 RUN echo "ignore-scripts=true" >> /root/.npmrc && \
     echo "min-release-age=7" >> /root/.npmrc && \
     echo "ignore-scripts=true" >> /etc/npmrc && \
     echo "min-release-age=7" >> /etc/npmrc
-
-# Common start commands you can uncomment to customize per-project
-# CMD ["bash"]
-# CMD ["bash","-l"]
-# CMD ["sh"]
-# CMD ["node","server.js"]
-# CMD ["python","main.py"]
-# CMD ["npm","start"]
-CMD ["bash"]
-EOF
+HARDENING
+    sed -i "/{{NPM_HARDENING}}/r $tmpf" "$DOCKERFILE"
+    sed -i "/{{NPM_HARDENING}}/d" "$DOCKERFILE"
+    rm "$tmpf"
   else
-    cat >"$DOCKERFILE" <<EOF
-FROM $IMAGE
-WORKDIR /app
-
-# Common start commands you can uncomment to customize per-project
-# CMD ["bash"]
-# CMD ["bash","-l"]
-# CMD ["sh"]
-# CMD ["node","server.js"]
-# CMD ["python","main.py"]
-# CMD ["npm","start"]
-CMD ["bash"]
-EOF
+    sed -i "/{{NPM_HARDENING}}/d" "$DOCKERFILE"
   fi
 
-  cat >"$COMPOSE_FILE" <<EOF
-name: ${PROJECT_NAME}-dev
+  # Render compose.yml
+  sed -e "s|{{PROJECT_NAME}}|$PROJECT_NAME|g" "$TEMPLATES_DIR/compose.yml" > "$COMPOSE_FILE"
 
-networks:
-  dev-net:
-    name: ${PROJECT_NAME}-net
-    driver: bridge
+  # Inject sinkhosts
+  local shf=$(mktemp)
+  while IFS= read -r host; do
+    [[ -z "$host" || "$host" == \#* ]] && continue
+    echo "      - \"$host:0.0.0.0\""
+  done < "$TEMPLATES_DIR/sinkhosts" > "$shf"
+  sed -i "/{{SINKHOSTS}}/r $shf" "$COMPOSE_FILE"
+  sed -i "/{{SINKHOSTS}}/d" "$COMPOSE_FILE"
+  rm "$shf"
 
-services:
-  app:
-    build: .
-    working_dir: /app
-    user: "\${HOST_UID}:\${HOST_GID}"
-    ports:
-      - "\${PORT}:\${PORT}"
-    networks:
-      - dev-net
-
-    # Container → Host access + Shai-Hulud C2 sinkhole
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-      - "git-tanstack.com:0.0.0.0"
-      - "seed1.getsession.org:0.0.0.0"
-      - "seed2.getsession.org:0.0.0.0"
-      - "seed3.getsession.org:0.0.0.0"
-      - "filev2.getsession.org:0.0.0.0"
-      - "api.masscan.cloud:0.0.0.0"
-      - "t.m-kosche.com:0.0.0.0"
-
-    volumes:
-      - ../repo:/app
-
-    environment:
-      - PORT
-    stdin_open: true
-    tty: true
-    init: true
-
-    # Security hardening
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-EOF
-
-  ENV_FILE="$CONTAINER_DIR/.env"
-  cat >"$ENV_FILE" <<EOF
-PORT=3000
-EOF
+  # Render .env
+  cp "$TEMPLATES_DIR/.env" "$CONTAINER_DIR/.env"
 
   echo
   echo -e "${DEV_TAG_GREEN} Environment initialized."

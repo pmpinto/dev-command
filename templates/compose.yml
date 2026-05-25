@@ -1,0 +1,36 @@
+name: {{PROJECT_NAME}}-dev
+
+networks:
+  dev-net:
+    name: {{PROJECT_NAME}}-net
+    driver: bridge
+
+services:
+  app:
+    build: .
+    working_dir: /app
+    user: "${HOST_UID}:${HOST_GID}"
+    ports:
+      - "${PORT}:${PORT}"
+    networks:
+      - dev-net
+
+    # Container → Host access + Shai-Hulud C2 sinkhole
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+{{SINKHOSTS}}
+
+    volumes:
+      - ../repo:/app
+
+    environment:
+      - PORT
+    stdin_open: true
+    tty: true
+    init: true
+
+    # Security hardening
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
