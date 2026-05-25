@@ -78,10 +78,12 @@ my-project/
 
 | Command | Description |
 |---------|-------------|
-| `dev` | Start the dev container shell |
+| `dev` | Start the dev container shell (builds if no image) |
 | `dev init` | Initialize a new container environment |
-| `dev cli` | Build (if needed) and drop into container |
+| `dev build` | Build container image |
 | `dev rebuild` | Rebuild the container image without cache |
+| `dev run` | Run container (no build) |
+| `dev cli` | Open shell in running container |
 | `dev clean` | Remove container, image, and `container/` folder |
 
 ## How It Works
@@ -108,7 +110,7 @@ Key `compose.yml` security settings:
 - **`host.docker.internal:host-gateway`** - Container can access your host's localhost services via `host.docker.internal:PORT`
 - **`cap_drop: [ALL]`** - All Linux capabilities removed (no `ptrace`, no raw sockets, no file permission bypass)
 - **`no-new-privileges: true`** - Prevents setuid privilege escalation
-- **C2 domain sinkholing** - 7 known malicious domains sinkholed to `0.0.0.0` (blocks Shai-Hulud exfiltration)
+- **C2 domain sinkholing** - 8 known malicious domains sinkholed to `0.0.0.0` (blocks Shai-Hulud exfiltration)
 - `user: "${HOST_UID}:${HOST_GID}"` - Run as you, not root
 - `init: true` - Proper signal handling (Ctrl+C works)
 - `volumes: ../repo:/app` - Your code is mounted, not copied
@@ -263,7 +265,9 @@ When using the `node` runtime, the generated Dockerfile includes npm config hard
 ```dockerfile
 # Harden npm config - blocks postinstall hooks and fast-burst worms
 RUN echo "ignore-scripts=true" >> /root/.npmrc && \
-    echo "min-release-age=7" >> /root/.npmrc
+    echo "min-release-age=7" >> /root/.npmrc && \
+    echo "ignore-scripts=true" >> /etc/npmrc && \
+    echo "min-release-age=7" >> /etc/npmrc
 ```
 
 **What this means:**

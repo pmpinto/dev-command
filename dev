@@ -17,11 +17,13 @@ DOCKERFILE="$CONTAINER_DIR/Dockerfile"
 dev_help() {
   echo
   echo -e "${DEV_TAG_BLUE} Available commands:"
-  echo -e "${DEV_TAG_BLUE}   dev init     Initialize container environment"
-  echo -e "${DEV_TAG_BLUE}   dev          Start dev container shell"
-  echo -e "${DEV_TAG_BLUE}   dev clean    Remove container image"
+  echo -e "${DEV_TAG_BLUE}   dev          Start container (builds if no image)"
+  echo -e "${DEV_TAG_BLUE}   dev build    Build container image"
   echo -e "${DEV_TAG_BLUE}   dev rebuild  Rebuild container image (--no-cache)"
-  echo -e "${DEV_TAG_BLUE}   dev cli      Drop into container shell (builds if needed)"
+  echo -e "${DEV_TAG_BLUE}   dev run      Run container (no build)"
+  echo -e "${DEV_TAG_BLUE}   dev cli      Open shell in running container"
+  echo -e "${DEV_TAG_BLUE}   dev init     Initialize container environment"
+  echo -e "${DEV_TAG_BLUE}   dev clean    Remove container image and environment"
   echo
 }
 
@@ -31,6 +33,75 @@ ensure_project_root() {
     echo -e "${DEV_TAG_RED} Run this command from the project root."
     exit 1
   fi
+}
+
+ensure_initialized() {
+  if [ ! -d "$CONTAINER_DIR" ]; then
+    echo -e "${DEV_TAG_RED} Error: container/ not found. Run 'dev init' first."
+    exit 1
+  fi
+}
+
+export_host_ids() {
+  export HOST_UID=$(id -u)
+  export HOST_GID=$(id -g)
+}
+
+dev_dev() {
+
+  ensure_project_root
+  ensure_initialized
+
+  export_host_ids
+
+  if ! docker images "${PROJECT_NAME}-dev-app" -q 2>/dev/null | grep -q .; then
+    echo -e "${DEV_TAG_BLUE} No image found. Building…"
+    docker compose --progress plain -f "$COMPOSE_FILE" build
+  fi
+
+  echo -e "${DEV_TAG_BLUE} Starting…"
+
+  docker compose -f "$COMPOSE_FILE" run --rm --service-ports app
+}
+
+dev_build() {
+
+  ensure_project_root
+  ensure_initialized
+
+  export_host_ids
+
+  docker compose --progress plain -f "$COMPOSE_FILE" build
+}
+
+dev_rebuild() {
+
+  ensure_project_root
+  ensure_initialized
+
+  export_host_ids
+
+  docker compose --progress plain -f "$COMPOSE_FILE" build --no-cache
+}
+
+dev_run() {
+
+  ensure_project_root
+  ensure_initialized
+
+  export_host_ids
+
+  docker compose -f "$COMPOSE_FILE" run --rm --service-ports app
+}
+
+dev_cli() {
+
+  ensure_project_root
+  ensure_initialized
+
+  export_host_ids
+
+  docker compose -f "$COMPOSE_FILE" exec app sh
 }
 
 dev_init() {
@@ -71,9 +142,9 @@ FROM $IMAGE
 WORKDIR /app
 
 # Harden npm config - blocks postinstall hooks and fast-burst worms
-RUN echo "ignore-scripts=true" >> /root/.npmrc && \\
-    echo "min-release-age=7" >> /root/.npmrc && \\
-    echo "ignore-scripts=true" >> /etc/npmrc && \\
+RUN echo "ignore-scripts=true" >> /root/.npmrc && \
+    echo "min-release-age=7" >> /root/.npmrc && \
+    echo "ignore-scripts=true" >> /etc/npmrc && \
     echo "min-release-age=7" >> /etc/npmrc
 
 # Common start commands you can uncomment to customize per-project
@@ -89,6 +160,7 @@ EOF
     cat >"$DOCKERFILE" <<EOF
 FROM $IMAGE
 WORKDIR /app
+
 # Common start commands you can uncomment to customize per-project
 # CMD ["bash"]
 # CMD ["bash","-l"]
@@ -105,7 +177,7 @@ name: ${PROJECT_NAME}-dev
 
 networks:
   dev-net:
-    name: \${PROJECT_NAME}-net
+    name: ${PROJECT_NAME}-net
     driver: bridge
 
 services:
@@ -127,6 +199,7 @@ services:
       - "seed3.getsession.org:0.0.0.0"
       - "filev2.getsession.org:0.0.0.0"
       - "api.masscan.cloud:0.0.0.0"
+      - "t.m-kosche.com:0.0.0.0"
 
     volumes:
       - ../repo:/app
@@ -154,54 +227,6 @@ EOF
   echo -e "${DEV_TAG_GREEN} Run: dev"
 }
 
-dev_run() {
-
-  ensure_project_root
-
-  if [ ! -d "$CONTAINER_DIR" ]; then
-    dev_help
-    exit 1
-  fi
-
-  echo -e "${DEV_TAG_BLUE} Starting…"
-
-  export HOST_UID=$(id -u)
-  export HOST_GID=$(id -g)
-
-  docker compose -f "$COMPOSE_FILE" build --progress=plain
-
-  docker compose -f "$COMPOSE_FILE" run --rm --service-ports app
-}
-
-dev_rebuild() {
-  ensure_project_root
-
-  if [ ! -d "$CONTAINER_DIR" ]; then
-    dev_help
-    exit 1
-  fi
-
-  docker compose -f "$COMPOSE_FILE" build --no-cache --progress=plain
-}
-
-dev_cli() {
-  ensure_project_root
-
-  if [ ! -d "$CONTAINER_DIR" ]; then
-    dev_help
-    exit 1
-  fi
-
-  echo -e "${DEV_TAG_BLUE} Building…"
-
-  export HOST_UID=$(id -u)
-  export HOST_GID=$(id -g)
-
-  docker compose -f "$COMPOSE_FILE" build --progress=plain
-
-  docker compose -f "$COMPOSE_FILE" run --rm --service-ports app bash
-}
-
 dev_clean() {
 
   ensure_project_root
@@ -214,7 +239,6 @@ dev_clean() {
   echo -e "${DEV_TAG_BLUE} Cleaning…"
 
   docker compose -f "$COMPOSE_FILE" down --rmi all --volumes --remove-orphans || true
-  # Remove the generated container directory as part of a full clean
   rm -rf "$CONTAINER_DIR" || true
 
   echo
@@ -224,22 +248,28 @@ dev_clean() {
 CMD="$1"
 
 case "$CMD" in
-init)
-  dev_init
-  ;;
-clean)
-  dev_clean
-  ;;
-rebuild)
-  dev_rebuild
-  ;;
-cli)
-  dev_cli
-  ;;
-"")
-  dev_run
-  ;;
-*)
-  dev_help
-  ;;
+  init)
+    dev_init
+    ;;
+  clean)
+    dev_clean
+    ;;
+  build)
+    dev_build
+    ;;
+  rebuild)
+    dev_rebuild
+    ;;
+  run)
+    dev_run
+    ;;
+  cli)
+    dev_cli
+    ;;
+  "")
+    dev_dev
+    ;;
+  *)
+    dev_help
+    ;;
 esac
