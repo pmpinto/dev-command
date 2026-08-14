@@ -24,7 +24,7 @@ dev_help() {
   echo -e "${DEV_TAG_BLUE}   dev build    Build container image"
   echo -e "${DEV_TAG_BLUE}   dev rebuild  Rebuild container image (--no-cache)"
   echo -e "${DEV_TAG_BLUE}   dev run      Run container (no build)"
-  echo -e "${DEV_TAG_BLUE}   dev cli      Open shell in running container"
+  echo -e "${DEV_TAG_BLUE}   dev cli      Open shell in container (one-off if not running)"
   echo -e "${DEV_TAG_BLUE}   dev init     Initialize container environment"
   echo -e "${DEV_TAG_BLUE}   dev clean    Remove container image and environment"
   echo
@@ -104,7 +104,13 @@ dev_cli() {
 
   export_host_ids
 
-  docker compose -f "$COMPOSE_FILE" exec app sh
+  if docker compose -f "$COMPOSE_FILE" ps --status running -q app 2>/dev/null | grep -q .; then
+    docker compose -f "$COMPOSE_FILE" exec app sh
+  else
+    echo -e "${DEV_TAG_BLUE} App not running. Opening a shell in a one-off container…"
+    echo -e "${DEV_TAG_BLUE} Tip: run 'npm install' to set up dependencies"
+    docker compose -f "$COMPOSE_FILE" run --rm --service-ports app sh
+  fi
 }
 
 dev_init() {
