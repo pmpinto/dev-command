@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -e
 
+# dev-command v2.0.0
+# One-command containerized development environments, Podman-native.
+
 DEV_TAG_GREEN="\033[48;5;2m\033[38;5;16m dev \033[0m"
 DEV_TAG_RED="\033[48;5;1m\033[38;5;16m dev \033[0m"
 DEV_TAG_BLUE="\033[48;5;4m\033[38;5;16m dev \033[0m"
@@ -12,7 +15,7 @@ REPO_DIR="$PROJECT_ROOT/repo"
 CONTAINER_DIR="$PROJECT_ROOT/container"
 
 COMPOSE_FILE="$CONTAINER_DIR/compose.yml"
-DOCKERFILE="$CONTAINER_DIR/Dockerfile"
+CONTAINERFILE="$CONTAINER_DIR/Containerfile"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATES_DIR="$SCRIPT_DIR/templates"
@@ -28,6 +31,19 @@ dev_help() {
   echo -e "${DEV_TAG_BLUE}   dev init     Initialize container environment"
   echo -e "${DEV_TAG_BLUE}   dev clean    Remove container image and environment"
   echo
+}
+
+require_podman() {
+  if ! command -v podman >/dev/null 2>&1; then
+    echo -e "${DEV_TAG_RED} Error: podman is not installed."
+    echo -e "${DEV_TAG_RED} dev v2 is Podman-native: install podman and podman-compose, then run again."
+    exit 1
+  fi
+  if ! command -v podman-compose >/dev/null 2>&1; then
+    echo -e "${DEV_TAG_RED} Error: podman-compose is not installed."
+    echo -e "${DEV_TAG_RED} Install podman-compose (e.g. pacman -S podman podman-compose), then run again."
+    exit 1
+  fi
 }
 
 ensure_project_root() {
@@ -50,71 +66,96 @@ export_host_ids() {
   export HOST_GID=$(id -g)
 }
 
+compose_project_name() {
+  grep -m1 '^name:' "$COMPOSE_FILE" | awk '{print $2}'
+}
+
+compose_image_exists() {
+  local name
+  name=$(compose_project_name)
+
+  # podman-compose tags images "<project>_app" (underscore) and short names
+  # are normalized with a localhost/ prefix. Check both forms; falls back
+  # to rebuilding if the naming ever differs.
+  for img in "${name}-app" "localhost/${name}-app" "${name}_app" "localhost/${name}_app"; do
+    if podman image exists "$img" 2>/dev/null; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 dev_dev() {
 
+  require_podman
   ensure_project_root
   ensure_initialized
 
   export_host_ids
 
-  if ! docker images "${PROJECT_NAME}-dev-app" -q 2>/dev/null | grep -q .; then
+  if ! compose_image_exists; then
     echo -e "${DEV_TAG_BLUE} No image found. Building…"
-    docker compose --progress plain -f "$COMPOSE_FILE" build
+    podman-compose -f "$COMPOSE_FILE" build
   fi
 
   echo -e "${DEV_TAG_BLUE} Starting…"
 
-  docker compose -f "$COMPOSE_FILE" run --rm --service-ports app
+  podman-compose -f "$COMPOSE_FILE" run --rm --service-ports app
 }
 
 dev_build() {
 
+  require_podman
   ensure_project_root
   ensure_initialized
 
   export_host_ids
 
-  docker compose --progress plain -f "$COMPOSE_FILE" build
+  podman-compose -f "$COMPOSE_FILE" build
 }
 
 dev_rebuild() {
 
+  require_podman
   ensure_project_root
   ensure_initialized
 
   export_host_ids
 
-  docker compose --progress plain -f "$COMPOSE_FILE" build --no-cache
+  podman-compose -f "$COMPOSE_FILE" build --no-cache
 }
 
 dev_run() {
 
+  require_podman
   ensure_project_root
   ensure_initialized
 
   export_host_ids
 
-  docker compose -f "$COMPOSE_FILE" run --rm --service-ports app
+  podman-compose -f "$COMPOSE_FILE" run --rm --service-ports app
 }
 
 dev_cli() {
 
+  require_podman
   ensure_project_root
   ensure_initialized
 
   export_host_ids
 
-  if docker compose -f "$COMPOSE_FILE" ps --status running -q app 2>/dev/null | grep -q .; then
-    docker compose -f "$COMPOSE_FILE" exec app sh
+  if podman-compose -f "$COMPOSE_FILE" ps -q app 2>/dev/null | grep -q .; then
+    podman-compose -f "$COMPOSE_FILE" exec app sh
   else
     echo -e "${DEV_TAG_BLUE} App not running. Opening a shell in a one-off container…"
     echo -e "${DEV_TAG_BLUE} Tip: run 'npm install' to set up dependencies"
-    docker compose -f "$COMPOSE_FILE" run --rm --service-ports app sh
+    podman-compose -f "$COMPOSE_FILE" run --rm --service-ports app sh
   fi
 }
 
 dev_init() {
 
+  require_podman
   ensure_project_root
 
   if [ -d "$CONTAINER_DIR" ]; then
@@ -145,8 +186,8 @@ dev_init() {
 
   IMAGE="${RUNTIME}:${IMAGE_TAG}"
 
-  # Render Dockerfile
-  sed -e "s|{{IMAGE}}|$IMAGE|g" "$TEMPLATES_DIR/Dockerfile" > "$DOCKERFILE"
+  # Render Containerfile
+  sed -e "s|{{IMAGE}}|$IMAGE|g" "$TEMPLATES_DIR/Containerfile" > "$CONTAINERFILE"
   if [ "$RUNTIME" = "node" ]; then
     local tmpf=$(mktemp)
     cat > "$tmpf" <<'HARDENING'
@@ -156,11 +197,11 @@ RUN echo "ignore-scripts=true" >> /root/.npmrc && \
     echo "ignore-scripts=true" >> /etc/npmrc && \
     echo "min-release-age=7" >> /etc/npmrc
 HARDENING
-    sed -i "/{{NPM_HARDENING}}/r $tmpf" "$DOCKERFILE"
-    sed -i "/{{NPM_HARDENING}}/d" "$DOCKERFILE"
+    sed -i "/{{NPM_HARDENING}}/r $tmpf" "$CONTAINERFILE"
+    sed -i "/{{NPM_HARDENING}}/d" "$CONTAINERFILE"
     rm "$tmpf"
   else
-    sed -i "/{{NPM_HARDENING}}/d" "$DOCKERFILE"
+    sed -i "/{{NPM_HARDENING}}/d" "$CONTAINERFILE"
   fi
 
   # Render compose.yml
@@ -186,6 +227,7 @@ HARDENING
 
 dev_clean() {
 
+  require_podman
   ensure_project_root
 
   if [ ! -d "$CONTAINER_DIR" ]; then
@@ -195,7 +237,7 @@ dev_clean() {
 
   echo -e "${DEV_TAG_BLUE} Cleaning…"
 
-  docker compose -f "$COMPOSE_FILE" down --rmi all --volumes --remove-orphans || true
+  podman-compose -f "$COMPOSE_FILE" down --rmi all --volumes --remove-orphans || true
   rm -rf "$CONTAINER_DIR" || true
 
   echo

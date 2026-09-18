@@ -1,6 +1,6 @@
 # dev-command
 
-One-command containerized development environments.
+One-command containerized development environments. **Podman-native (v2).**
 
 ## The Problem
 
@@ -31,11 +31,28 @@ One-command containerized development environments.
 
 ## Prerequisites
 
-- [Docker](https://www.docker.com/)
-- [docker-compose](https://docs.docker.com/compose/)
+- [podman](https://podman.io/)
+- [podman-compose](https://github.com/containers/podman-compose)
 - [fzf](https://github.com/junegunn/fzf)
 - [jq](https://jqlang.github.io/jq/)
 - [curl](https://curl.se/)
+
+Install on Arch: `sudo pacman -S podman podman-compose fzf jq curl`
+
+## Why Podman (v2)?
+
+dev-command ran on Docker through v1. Version 2 is **Podman-native** for a few reasons:
+
+- **Rootless by default** - containers run as your user, no daemon with root privileges, no docker-group-with-passwordless-root security hole
+- **Daemonless** - no always-on background service; `podman` activates on demand
+- **No stale daemon bugs** - the "I stopped using docker for three months and now it can't connect to its own socket" failure mode is gone
+
+The environment files are standard-compliant, so nothing meaningful changed:
+
+- `compose.yml` is the engine-neutral Compose Specification - works identically
+- The build file is now **`Containerfile`** (the OCI-canonical name). If a project's folder still has a `Dockerfile`, Buildah (podman's builder) reads that too - both are byte-for-byte the same format.
+
+If you're migrating an existing project, the only real steps are: install podman + podman-compose, rename `container/Dockerfile` → `container/Containerfile` (optional, cosmetic), and keep using `dev` exactly as before.
 
 ## Installation
 
@@ -71,7 +88,7 @@ Your folder structure:
 ```
 my-project/
 ├── repo/       # Your code lives here
-└── container/  # (generated) Docker config
+└── container/  # (generated) container config
 ```
 
 ## Commands
@@ -89,18 +106,18 @@ my-project/
 ## How It Works
 
 1. **`dev init`** prompts you to choose a runtime (e.g., `node`, `python`, `ruby`, `ubuntu`) and a version
-2. It creates a `container/` folder with a minimal `Dockerfile` and `compose.yml`
-3. The `Dockerfile` uses your chosen base image
+2. It creates a `container/` folder with a minimal `Containerfile` and `compose.yml`
+3. The `Containerfile` uses your chosen base image
 4. The `compose.yml` mounts your `repo/` folder into the container at `/app`
-5. Running `dev` starts the container and drops you into a shell, unless you change the `CMD` entry in the Dockerfile
+5. Running `dev` starts the container and drops you into a shell, unless you change the `CMD` entry in the Containerfile
 
 Generated folder structure:
 ```
 my-project/
 ├── repo/           # Your code lives here
-└── container/      # (generated) Docker config
+└── container/      # (generated) container config
     ├── compose.yml
-    ├── Dockerfile
+    ├── Containerfile
     └── .env        # Port configuration (default: PORT=3000)
 ```
 
@@ -112,6 +129,7 @@ Key `compose.yml` security settings:
 - **`no-new-privileges: true`** - Prevents setuid privilege escalation
 - **C2 domain sinkholing** - 8 known malicious domains sinkholed to `0.0.0.0` (blocks Shai-Hulud exfiltration)
 - `user: "${HOST_UID}:${HOST_GID}"` - Run as you, not root
+- `userns_mode: keep-id` - Maps your host user id into the container so bind-mount writes (`repo/`) work under rootless Podman
 - `init: true` - Proper signal handling (Ctrl+C works)
 - `volumes: ../repo:/app` - Your code is mounted, not copied
 
@@ -119,7 +137,7 @@ Key `compose.yml` security settings:
 
 ### Changing the base image
 
-Edit `container/Dockerfile` after running `dev init`:
+Edit `container/Containerfile` after running `dev init`:
 
 ```dockerfile
 FROM node:18
@@ -129,7 +147,7 @@ CMD ["bash"]
 
 ### Adding packages
 
-Add `RUN` commands to the Dockerfile:
+Add `RUN` commands to the Containerfile:
 
 ```dockerfile
 FROM node:20
@@ -170,9 +188,9 @@ environment:
 
 **Note:** To access services running on your **host** from inside the container, use `host.docker.internal:PORT` instead of `localhost:PORT`.
 
-### Using an existing Dockerfile
+### Using an existing Containerfile / Dockerfile
 
-If the project already has a `Dockerfile` in the root, the script will detect it and use that instead.
+If the project already has a `Containerfile` (or a `Dockerfile`) in the container folder, that one is used. Podman's builder also auto-detects a `Dockerfile` with no changes needed.
 
 ## Multi-Container Projects
 
@@ -260,7 +278,7 @@ Now the `app` service can access the API via `http://api:3001` (instead of `http
 
 ## Security Hardening (Node Runtime)
 
-When using the `node` runtime, the generated Dockerfile includes npm config hardening:
+When using the `node` runtime, the generated Containerfile includes npm config hardening:
 
 ```dockerfile
 # Harden npm config - blocks postinstall hooks and fast-burst worms
@@ -285,10 +303,10 @@ Run `dev` from the project root. You need a `repo/` folder at `$PWD/repo`.
 Install the prerequisites.
 
 **Permission denied when creating files**  
-The container runs as your host user (via `HOST_UID`/`HOST_GID`), so file permissions should work. If you still have issues, check your Docker daemon is running.
+The container runs as your host user (via `HOST_UID`/`HOST_GID`), so file permissions should work. If you still have issues, check `podman info` runs cleanly.
 
 **Container starts but immediately exits**  
-Your container likely needs a persistent shell. Edit `container/Dockerfile` and ensure `CMD ["bash"]` (not `CMD ["node"]` or similar).
+Your container likely needs a persistent shell. Edit `container/Containerfile` and ensure `CMD ["bash"]` (not `CMD ["node"]` or similar).
 
 **Cannot access app from host browser**  
 Check the `PORT` in `container/.env` matches the port your app is listening on. The default is `PORT=3000`. If your app uses port `8080`, change the `.env` file.

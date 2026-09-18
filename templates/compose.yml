@@ -10,6 +10,7 @@ services:
     build: .
     working_dir: /app
     user: "${HOST_UID}:${HOST_GID}"
+    userns_mode: keep-id
     ports:
       - "${PORT}:${PORT}"
     networks:
