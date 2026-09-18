@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-# dev-command v2.0.0
+# dev-command v2.0.1
 # One-command containerized development environments, Podman-native.
 
 DEV_TAG_GREEN="\033[48;5;2m\033[38;5;16m dev \033[0m"
@@ -144,8 +144,10 @@ dev_cli() {
 
   export_host_ids
 
-  if podman-compose -f "$COMPOSE_FILE" ps -q app 2>/dev/null | grep -q .; then
-    podman-compose -f "$COMPOSE_FILE" exec app sh
+  if cid=$(podman ps \
+      --filter "label=com.docker.compose.project=$(compose_project_name)" \
+      --filter "label=com.docker.compose.service=app" -q 2>/dev/null); then
+    podman exec -it "$cid" sh
   else
     echo -e "${DEV_TAG_BLUE} App not running. Opening a shell in a one-off container…"
     echo -e "${DEV_TAG_BLUE} Tip: run 'npm install' to set up dependencies"
